@@ -16,6 +16,8 @@ import { UpdateCampaignDto } from './dto/update-campaign.dto';
 import type { CreateUpdateDto } from './dto/create-update.dto';
 import { ContractBalanceResponseDto } from './dto/contract-balance.dto';
 
+const MIN_MILESTONE_TARGET_AMOUNT = 0.0000001;
+
 @Injectable()
 export class CampaignsService {
   constructor(
@@ -29,12 +31,14 @@ export class CampaignsService {
    */
   async createCampaign(userId: string, dto: CreateCampaignDto) {
     if (!dto.goalAmount || parseFloat(dto.goalAmount) <= 0) {
-      throw new BadRequestException('goalAmount is required and must be greater than 0');
+      throw new BadRequestException(
+        'goalAmount is required and must be greater than 0',
+      );
     }
     const milestoneCreates = (dto.milestones || []).map((m) => ({
       title: m.title,
       description: m.description ?? null,
-      targetAmount: (m.targetAmount ?? 0) as any,
+      targetAmount: parseMilestoneTargetAmount(m.targetAmount),
       dueDate: m.dueDate ? new Date(m.dueDate) : undefined,
     }));
 
@@ -244,21 +248,27 @@ export class CampaignsService {
     };
   }
 
-  /** Recalculate a campaign's raisedAmount from confirmed donations */
+  /**
+   * Recalculate a campaign's raisedAmount from confirmed donations.
+   * Uses a Prisma $transaction to ensure the aggregate read and campaign
+   * update happen atomically.
+   */
   async recalculateCampaignStats(campaignId: string) {
-    const agg = await this.prisma.donation.aggregate({
-      where: {
-        campaignId,
-        status: 'CONFIRMED',
-      },
-      _sum: { amount: true },
-    });
+    await this.prisma.$transaction(async (tx) => {
+      const agg = await tx.donation.aggregate({
+        where: {
+          campaignId,
+          status: 'CONFIRMED',
+        },
+        _sum: { amount: true },
+      });
 
-    const raisedAmount = agg._sum.amount ?? new Prisma.Decimal(0);
+      const raisedAmount = agg._sum.amount ?? new Prisma.Decimal(0);
 
-    await this.prisma.campaign.update({
-      where: { id: campaignId },
-      data: { raisedAmount },
+      await tx.campaign.update({
+        where: { id: campaignId },
+        data: { raisedAmount },
+      });
     });
   }
 
@@ -314,7 +324,9 @@ export class CampaignsService {
       throw new NotFoundException(`Campaign ${campaignId} not found`);
     }
     if (campaign.creatorId !== userId) {
-      throw new ForbiddenException('Only the campaign creator can post updates');
+      throw new ForbiddenException(
+        'Only the campaign creator can post updates',
+      );
     }
 
     return this.prisma.update.create({
@@ -374,7 +386,15 @@ export class CampaignsService {
     const uniqueAssets = [...new Set(donations.map((d) => d.assetCode))];
     const avgDonation = donations.length ? totalRaised / donations.length : 0;
 
-    return { campaignId, totalRaised, donorCount, uniqueAssets, avgDonation, donationsPerDay: [], topDonors: [] };
+    return {
+      campaignId,
+      totalRaised,
+      donorCount,
+      uniqueAssets,
+      avgDonation,
+      donationsPerDay: [],
+      topDonors: [],
+    };
   }
 
   private async browseCampaignsWithFullTextSearch(input: {
@@ -432,6 +452,23 @@ export class CampaignsService {
 
     return { data: ordered, total, page, limit };
   }
+}
+
+function parseMilestoneTargetAmount(targetAmount?: string) {
+  const raw = targetAmount?.trim();
+  const amount = raw ? Number(raw) : Number.NaN;
+
+  if (
+    !raw ||
+    !Number.isFinite(amount) ||
+    amount < MIN_MILESTONE_TARGET_AMOUNT
+  ) {
+    throw new BadRequestException(
+      `milestone targetAmount is required and must be at least ${MIN_MILESTONE_TARGET_AMOUNT}`,
+    );
+  }
+
+  return raw;
 }
 
 function campaignBrowseSelect() {

@@ -45,6 +45,8 @@ export class DonationResponseDto {
   donatedAt: Date;
   confirmedAt: Date | null;
   createdAt: Date;
+  /** Flag indicating if the donation status was recovered from PENDING/FAILED on re-verification */
+  recovered?: boolean;
 }
 
 export class PlatformTipResponseDto {

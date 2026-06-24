@@ -15,6 +15,7 @@ import {
   DonationResponseDto,
   PlatformTipResponseDto,
 } from './dto/donation.dto';
+import { buildDonationCsv } from '../common/csv-export.helper';
 
 @Injectable()
 export class DonationsService {
@@ -44,6 +45,44 @@ export class DonationsService {
       where: { txHash: dto.txHash },
     });
     if (existing) {
+      // Re-verify PENDING or FAILED donations if within idempotency window
+      if (existing.status === 'PENDING' || existing.status === 'FAILED') {
+        const idempotencyWindowMs = 30_000; // 30 seconds
+        const timeSinceCreation = Date.now() - existing.createdAt.getTime();
+
+        if (timeSinceCreation <= idempotencyWindowMs) {
+          const recovered = await this.retryVerifyDonation(existing, dto);
+          if (recovered) {
+            // Fetch the updated donation
+            const updated = await this.prisma.donation.findUnique({
+              where: { txHash: dto.txHash },
+            });
+            if (updated) {
+              return {
+                donation: {
+                  id: updated.id,
+                  amount: updated.amount.toString(),
+                  assetCode: updated.assetCode,
+                  txHash: updated.txHash,
+                  status: updated.status,
+                  donorId: updated.donorId,
+                  campaignId: updated.campaignId,
+                  tipAmount: updated.tipAmount?.toString() || null,
+                  tipAsset: updated.tipAsset || null,
+                  tipId: updated.tipId,
+                  donatedAt: updated.donatedAt,
+                  confirmedAt: updated.confirmedAt,
+                  createdAt: updated.createdAt,
+                  recovered: true,
+                },
+                tip: null,
+              };
+            }
+          }
+        }
+      }
+
+      // Return cached donation (not recovered or outside window)
       return {
         donation: {
           id: existing.id,
@@ -59,6 +98,7 @@ export class DonationsService {
           donatedAt: existing.donatedAt,
           confirmedAt: existing.confirmedAt,
           createdAt: existing.createdAt,
+          recovered: false,
         },
         tip: null,
       };
@@ -81,7 +121,7 @@ export class DonationsService {
 
     await this.stellarTxs.verifyDonationTransaction({
       txHash: dto.txHash,
-      destination: campaign.contractId!,
+      destination: campaign.contractId,
       amount: dto.amount,
       asset: requestedAsset,
       acceptedAssets,
@@ -122,9 +162,62 @@ export class DonationsService {
         donatedAt: created.donatedAt,
         confirmedAt: created.confirmedAt,
         createdAt: created.createdAt,
+        recovered: false,
       },
       tip: null,
     };
+  }
+
+  /**
+   * Retry verification for PENDING or FAILED donations
+   * Re-checks the transaction on-chain and updates the status if successful
+   * @returns true if the donation was recovered (status changed to CONFIRMED)
+   */
+  private async retryVerifyDonation(
+    existing: any,
+    dto: CreateDonationDto,
+  ): Promise<boolean> {
+    try {
+      const campaign = await this.prisma.campaign.findUnique({
+        where: { id: dto.campaignId },
+      });
+
+      if (!campaign || !campaign.contractId) {
+        return false;
+      }
+
+      const requestedAsset = parseAsset(
+        dto.assetCode || 'XLM',
+        dto.assetIssuer,
+      );
+      const acceptedAssets = coerceAcceptedAssets(campaign.acceptedAssets);
+
+      // Re-verify the transaction on-chain
+      await this.stellarTxs.verifyDonationTransaction({
+        txHash: dto.txHash!,
+        destination: campaign.contractId,
+        amount: dto.amount,
+        asset: requestedAsset,
+        acceptedAssets,
+      });
+
+      // If verification succeeds, update the donation status
+      await this.prisma.donation.update({
+        where: { txHash: dto.txHash },
+        data: {
+          status: 'CONFIRMED',
+          confirmedAt: new Date(),
+        },
+      });
+
+      // Recalculate campaign stats since we confirmed a previously failed/pending donation
+      await this.campaigns.recalculateCampaignStats(campaign.id);
+
+      return true;
+    } catch (error) {
+      // Verification failed, keep existing status
+      return false;
+    }
   }
 
   /** Get all donations for a user ordered by most recent first */
@@ -159,6 +252,8 @@ export class DonationsService {
 
       if (!donation) return false;
 
+      const previousStatus = donation.status;
+
       const { rpc: sorobanRpc } = await import('@stellar/stellar-sdk');
       const server = new sorobanRpc.Server('https://soroban-rpc.stellar.org');
       const response = await server.getTransaction(txHash);
@@ -168,6 +263,11 @@ export class DonationsService {
           where: { txHash },
           data: { status: 'CONFIRMED', confirmedAt: new Date() },
         });
+
+        // If the donation was not already CONFIRMED, recalculate campaign stats
+        if (previousStatus !== 'CONFIRMED') {
+          await this.campaigns.recalculateCampaignStats(donation.campaignId);
+        }
 
         const updated = await this.prisma.donation.findUnique({
           where: { txHash },
@@ -182,6 +282,11 @@ export class DonationsService {
         }
 
         return true;
+      }
+
+      // Only flip to FAILED if it's not already CONFIRMED
+      if (previousStatus === 'CONFIRMED') {
+        return false;
       }
 
       await this.prisma.donation.update({
@@ -287,28 +392,29 @@ export class DonationsService {
     });
     if (!campaign) throw new NotFoundException('Campaign not found');
 
-    const skip = (page - 1) * limit;      const total = await this.prisma.donation.count({
-        where: { campaignId, status: 'CONFIRMED' },
-      });
+    const skip = (page - 1) * limit;
+    const total = await this.prisma.donation.count({
+      where: { campaignId, status: 'CONFIRMED' },
+    });
 
-      const donations = await this.prisma.donation.findMany({
-        where: { campaignId, status: 'CONFIRMED' },
-        include: { donor: { select: { walletAddress: true } } },
-        orderBy: { [sortBy]: order },
-        skip,
-        take: limit,
-      });
+    const donations = await this.prisma.donation.findMany({
+      where: { campaignId, status: 'CONFIRMED' },
+      include: { donor: { select: { walletAddress: true } } },
+      orderBy: { [sortBy]: order },
+      skip,
+      take: limit,
+    });
 
-      const donationsWithRank = donations.map((donation, index) => ({
-        rank: skip + index + 1,
-        walletAddress: donation.isAnonymous
-          ? 'Anonymous'
-          : (donation.donor?.walletAddress ?? 'Anonymous'),
-        amount: donation.amount.toString(),
-        assetCode: donation.assetCode,
-        createdAt: donation.createdAt,
-        txHash: donation.txHash,
-      }));
+    const donationsWithRank = donations.map((donation, index) => ({
+      rank: skip + index + 1,
+      walletAddress: donation.isAnonymous
+        ? 'Anonymous'
+        : (donation.donor?.walletAddress ?? 'Anonymous'),
+      amount: donation.amount.toString(),
+      assetCode: donation.assetCode,
+      createdAt: donation.createdAt,
+      txHash: donation.txHash,
+    }));
 
     return {
       donations: donationsWithRank,
@@ -412,29 +518,15 @@ export class DonationsService {
       orderBy: { donatedAt: 'desc' },
     });
 
-    const headers = [
-      'Campaign',
-      'Amount',
-      'Asset',
-      'Date',
-      'Tx Hash',
-      'USD Equivalent (pending)',
-    ];
-    const rows: string[] = [headers.map((h) => `"${h}"`).join(',')];
-
-    for (const donation of donations) {
-      const row = [
-        `"${(donation.campaign?.title || 'Unknown').replace(/"/g, '""')}"`,
-        donation.amount.toString(),
-        donation.assetCode,
-        donation.donatedAt.toISOString().split('T')[0],
-        `"${donation.txHash || ''}"`,
-        'N/A', // Price oracle not yet integrated
-      ];
-      rows.push(row.join(','));
-    }
-
-    return rows.join('\n');
+    return buildDonationCsv(
+      donations.map((d) => ({
+        campaignTitle: d.campaign?.title || 'Unknown',
+        amount: d.amount.toString(),
+        assetCode: d.assetCode,
+        donatedAt: d.donatedAt,
+        txHash: d.txHash,
+      })),
+    );
   }
 
   /** Get or create a user record by Stellar wallet address */

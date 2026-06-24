@@ -4,6 +4,9 @@ import {
   MaxLength,
   IsUrl,
   IsArray,
+  IsNotEmpty,
+  IsNumberString,
+  Matches,
   ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
@@ -16,10 +19,13 @@ class MilestoneInput {
   @IsString()
   description?: string;
 
-  // Accept numeric as string to be safe for Decimal columns
-  @IsOptional()
-  @IsString()
-  targetAmount?: string;
+  // Accept numeric strings to preserve precision for Decimal columns.
+  @IsNotEmpty()
+  @IsNumberString()
+  @Matches(/^(?=.*[1-9])\d+(?:\.\d+)?$/, {
+    message: 'targetAmount must be greater than 0',
+  })
+  targetAmount: string;
 
   @IsOptional()
   @IsString()

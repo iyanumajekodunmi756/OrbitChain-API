@@ -4,6 +4,7 @@ import { Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { QUEUE_EXPORT } from '../queue/queue.constants';
+import { buildDonationCsv } from '../common/csv-export.helper';
 
 export interface ExportDonationJobData {
   userId: string;
@@ -63,30 +64,15 @@ export class ExportProcessor {
       orderBy: { donatedAt: 'desc' },
     });
 
-    // Build CSV
-    const headers = [
-      'Campaign',
-      'Amount',
-      'Asset',
-      'Date',
-      'Tx Hash',
-      'USD Equivalent (pending)',
-    ];
-    const rows: string[] = [headers.map((h) => `"${h}"`).join(',')];
-
-    for (const donation of donations) {
-      const row = [
-        `"${(donation.campaignId || 'Unknown').replace(/"/g, '""')}"`,
-        donation.amount.toString(),
-        donation.assetCode,
-        donation.donatedAt.toISOString().split('T')[0],
-        `"${donation.txHash || ''}"`,
-        'N/A', // Price oracle not yet integrated
-      ];
-      rows.push(row.join(','));
-    }
-
-    const csv = rows.join('\n');
+    const csv = buildDonationCsv(
+      donations.map((d) => ({
+        campaignTitle: d.campaignId || 'Unknown',
+        amount: d.amount.toString(),
+        assetCode: d.assetCode,
+        donatedAt: d.donatedAt,
+        txHash: d.txHash,
+      })),
+    );
 
     this.logger.log(
       `Donation export complete for user ${userId}: ${donations.length} rows`,

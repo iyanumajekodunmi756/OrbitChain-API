@@ -32,17 +32,17 @@
 
 ## Tech Stack
 
-| Layer | Technology |
-|-------|-----------|
-| **Runtime** | Node.js + TypeScript |
-| **Framework** | NestJS (Express adapter) |
-| **Database** | PostgreSQL + Prisma ORM |
-| **Cache / Queue** | Redis + Bull |
-| **Blockchain** | Stellar SDK + Soroban Smart Contracts |
-| **Real-Time** | Socket.IO WebSockets |
-| **Monitoring** | Sentry error tracking |
-| **Email** | Nodemailer (SMTP) |
-| **API Docs** | Swagger / OpenAPI |
+| Layer             | Technology                            |
+| ----------------- | ------------------------------------- |
+| **Runtime**       | Node.js + TypeScript                  |
+| **Framework**     | NestJS (Express adapter)              |
+| **Database**      | PostgreSQL + Prisma ORM               |
+| **Cache / Queue** | Redis + Bull                          |
+| **Blockchain**    | Stellar SDK + Soroban Smart Contracts |
+| **Real-Time**     | Socket.IO WebSockets                  |
+| **Monitoring**    | Sentry error tracking                 |
+| **Email**         | Nodemailer (SMTP)                     |
+| **API Docs**      | Swagger / OpenAPI                     |
 
 ---
 
@@ -142,18 +142,18 @@ npm run test:cov
 
 ## API Modules
 
-| Module | Description | Endpoints |
-|--------|-------------|-----------|
-| **Auth** | Stellar wallet challenge-response auth | `/auth/*` |
-| **Users** | Profile, KYC, notification preferences | `/users/*` |
-| **Campaigns** | CRUD, stats, fund release requests | `/campaigns/*` |
-| **Donations** | Donation creation, history, admin tips | `/donations/*` |
-| **Milestones** | Campaign milestone tracking | `/milestones/*` |
-| **Contracts** | Soroban smart contract management | `/contracts/*` |
-| **Notifications** | WebSocket gateway + REST endpoints | `/notifications/*` |
-| **Admin** | User moderation, campaign suspension | `/admin/*` |
-| **Health** | Health checks (DB, Redis) | `/health` |
-| **API Keys** | Programmatic API key management | `/api-keys/*` |
+| Module            | Description                            | Endpoints          |
+| ----------------- | -------------------------------------- | ------------------ |
+| **Auth**          | Stellar wallet challenge-response auth | `/auth/*`          |
+| **Users**         | Profile, KYC, notification preferences | `/users/*`         |
+| **Campaigns**     | CRUD, stats, fund release requests     | `/campaigns/*`     |
+| **Donations**     | Donation creation, history, admin tips | `/donations/*`     |
+| **Milestones**    | Campaign milestone tracking            | `/milestones/*`    |
+| **Contracts**     | Soroban smart contract management      | `/contracts/*`     |
+| **Notifications** | WebSocket gateway + REST endpoints     | `/notifications/*` |
+| **Admin**         | User moderation, campaign suspension   | `/admin/*`         |
+| **Health**        | Health checks (DB, Redis)              | `/health`          |
+| **API Keys**      | Programmatic API key management        | `/api-keys/*`      |
 
 ---
 
@@ -184,6 +184,28 @@ src/
 ├── app.service.ts      # Root service
 └── main.ts             # Application bootstrap & Swagger
 ```
+
+---
+
+## CSV Donation Exports
+
+All donation CSV exports (`GET /users/me/donations/export` and the async queue variant) include the following columns:
+
+| Column   | Notes                                                 |
+| -------- | ----------------------------------------------------- |
+| Campaign | Campaign title at time of export                      |
+| Amount   | On-chain amount in the native asset                   |
+| Asset    | Asset code (e.g. `XLM`, `USDC`)                       |
+| Date     | ISO date of the donation (`YYYY-MM-DD`)               |
+| Tx Hash  | Stellar transaction hash for independent verification |
+
+> **USD Equivalent column is intentionally absent.**
+> A hardcoded `0.00` placeholder was previously exported under this heading — a medium-severity finding
+> ([#15](https://github.com/OrbitChainLabs/OrbitChain-API/issues/15)) because downstream consumers
+> (tax tools, accounting software, partner integrations) could silently trust an incorrect value.
+> The column will be reinstated once a verified price-oracle integration
+> (Stellar Horizon order-book snapshots, CoinGecko, or a self-hosted oracle) is in place.
+> Until then, please cross-reference on-chain amounts with your preferred exchange-rate source.
 
 ---
 

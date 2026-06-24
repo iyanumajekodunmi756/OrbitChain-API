@@ -15,6 +15,7 @@ import {
 } from './dto/notification-preferences.dto';
 import { QUEUE_EXPORT } from '../queue/queue.constants';
 import type { ExportDonationJobData } from './export.processor';
+import { buildDonationCsv } from '../common/csv-export.helper';
 
 /** Threshold above which exports are processed via Bull queue */
 const EXPORT_QUEUE_THRESHOLD = 500;
@@ -319,7 +320,8 @@ export class UsersService {
       _count: true,
     });
 
-    const totalDonated: string = totalDonatedResult._sum?.amount?.toString() || '0';
+    const totalDonated: string =
+      totalDonatedResult._sum?.amount?.toString() || '0';
     const totalDonations: number = totalDonatedResult._count ?? 0;
     const averageDonation =
       totalDonations > 0
@@ -400,29 +402,17 @@ export class UsersService {
       orderBy: { donatedAt: 'desc' },
     });
 
-    const headers = [
-      'Campaign',
-      'Amount',
-      'Asset',
-      'Date',
-      'Tx Hash',
-      'USD Equivalent (pending)',
-    ];
-    const rows: string[] = [headers.map((h) => `"${h}"`).join(',')];
+    const csv = buildDonationCsv(
+      donations.map((d) => ({
+        campaignTitle: (d as any).campaign?.title || 'Unknown',
+        amount: d.amount.toString(),
+        assetCode: d.assetCode,
+        donatedAt: d.donatedAt,
+        txHash: d.txHash,
+      })),
+    );
 
-    for (const donation of donations) {
-      const row = [
-        `"${((donation as any).campaign?.title || 'Unknown').replace(/"/g, '""')}"`,
-        donation.amount.toString(),
-        donation.assetCode,
-        donation.donatedAt.toISOString().split('T')[0],
-        `"${donation.txHash || ''}"`,
-        'N/A', // Price oracle not yet integrated
-      ];
-      rows.push(row.join(','));
-    }
-
-    return { csv: rows.join('\n'), queued: false };
+    return { csv, queued: false };
   }
 
   /**

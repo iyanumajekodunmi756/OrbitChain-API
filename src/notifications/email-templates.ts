@@ -24,6 +24,12 @@ interface CampaignUpdateData {
   campaignUrl: string;
 }
 
+interface CampaignSuspensionData {
+  campaignTitle: string;
+  reason: string;
+  supportEmail: string;
+}
+
 export const donationReceivedTemplate = {
   subject: 'New Donation Received! 💰',
   html: (data: DonationReceivedData) => `
@@ -98,6 +104,46 @@ export const campaignUpdateTemplate = {
       View Update
     </a>
   </div>
+</body>
+</html>`,
+};
+
+export const campaignSuspensionTemplate = {
+  subject: 'Important: Your Campaign Has Been Suspended',
+  html: (data: CampaignSuspensionData) => `
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8" /></head>
+<body style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;color:#333">
+  <div style="text-align:center;margin-bottom:24px">
+    <h1 style="color:#dc2626;font-size:28px;margin:0">⚠️ Campaign Suspended</h1>
+  </div>
+  <p style="font-size:16px;line-height:1.6">
+    We're writing to inform you that your campaign <strong>"${data.campaignTitle}"</strong> has been suspended by our moderation team.
+  </p>
+  <div style="background:#fef2f2;border-left:4px solid #dc2626;padding:16px;margin:24px 0;border-radius:4px">
+    <h3 style="margin:0 0 8px;font-size:16px;color:#991b1b">Reason for Suspension:</h3>
+    <p style="font-size:14px;line-height:1.6;color:#7f1d1d;margin:0">${data.reason}</p>
+  </div>
+  <p style="font-size:16px;line-height:1.6">
+    <strong>What this means:</strong>
+  </p>
+  <ul style="font-size:14px;line-height:1.8;color:#475569">
+    <li>Your campaign is no longer visible to the public</li>
+    <li>No new donations can be received</li>
+    <li>Existing funds remain secure in the smart contract</li>
+  </ul>
+  <p style="font-size:16px;line-height:1.6;margin-top:24px">
+    If you believe this suspension was made in error or would like to discuss next steps, please contact our support team.
+  </p>
+  <div style="text-align:center;margin:32px 0">
+    <a href="mailto:${data.supportEmail}" style="display:inline-block;background:#dc2626;color:#fff;padding:12px 28px;border-radius:6px;text-decoration:none;font-size:16px">
+      Contact Support
+    </a>
+  </div>
+  <p style="font-size:12px;color:#888;line-height:1.5;margin-top:32px;border-top:1px solid #e2e8f0;padding-top:16px">
+    This is an automated notification from OrbitChain. Please do not reply to this email.
+  </p>
 </body>
 </html>`,
 };
